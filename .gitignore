@@ -1,0 +1,11 @@
+.pio/
+.vscode/
+!.vscode/extensions.json
+.pioenvs
+.piolibdeps
+*.pyc
+__pycache__/
+compile_commands.json
+
+# Do not commit real credentials. See secrets.h.example.
+include/secrets.h
