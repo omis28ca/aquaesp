@@ -99,18 +99,17 @@ start ACKing, and `online` flips true.
 
 ## Repo layout
 
-`lib/jandy_codec/` holds all framing logic and has **no Arduino or FreeRTOS
-dependency**, so it builds and unit-tests on a laptop. `src/jandy_serial.cpp`
+`lib/aqualinkd_codec/` holds all framing logic and has **no Arduino or FreeRTOS
+dependency**, so it builds and unit-tests on a laptop. `lib/aqualinkd_esp32/`
 is only the UART and threading wrapper. Keep protocol logic on the codec side
 of that line — it is the difference between testable and not.
 
 ```
-lib/jandy_codec/     framing: checksum, DLE stuffing, RX state machine
-src/jandy_serial.cpp UART + pinned task + key queue
-src/panel_state.cpp  LED decode, display scraping
-src/net_api.cpp      REST / WebSocket / MQTT
+lib/aqualinkd_codec/ framing: checksum, DLE stuffing, RX state machine
+lib/aqualinkd_esp32/ UART + pinned task + key queue
+src/main.cpp         bus configuration and initialization
 include/config.h     the only file you should need to edit
-test/test_codec/     Unity tests (12, all passing)
+test/test_codec/     native Unity codec tests
 tools/fake_panel.py  bus master simulator
 ```
 
@@ -137,15 +136,36 @@ anywhere near real equipment.
 
 | Method | Path | Effect |
 |---|---|---|
-| GET  | `/api/state` | Full state JSON |
-| POST | `/api/button/{n}/{on\|off\|toggle}` | Circuit control |
-| POST | `/api/key/{code}` | Raw keypress, e.g. `/api/key/0x10` |
-| GET  | `/api/raw` | Last 60 bus frames |
-| WS   | `/ws` | State JSON pushed on every change |
+| GET  | `/api/status` | Bus, ACK latency, queue, heap and WiFi status JSON |
+| GET  | `/api/state` | Status plus the current state of all 12 RS-8 buttons |
+| GET  | `/api/config` | Non-secret compiled device and bus configuration |
+| GET  | `/api/raw` | Last 60 decoded bus frames as text |
 
-MQTT publishes retained state to `jandy/state` and `jandy/button/<name>/state`,
-subscribes to `jandy/button/<name>/set`, and emits Home Assistant discovery
-under `homeassistant/`.
+Button-level control and WebSocket routes will be added after panel-state
+decoding is verified against captured traffic.
+
+## MQTT
+
+When `MQTT_ENABLED` is set, the core-0 network task maintains the broker
+connection and exposes these topics below `MQTT_BASE_TOPIC` (default `jandy`):
+
+| Topic | Retained | Purpose |
+|---|---:|---|
+| `jandy/status` | yes | `online` availability with an `offline` last will |
+| `jandy/state` | yes | `/api/state` snapshot, published on button changes |
+| `jandy/button/<name>/state` | yes | One `off`, `on`, `flash`, `enabled`, or `unknown` state |
+| `jandy/raw` | no | Most recently decoded bus frame |
+| `jandy/key/set` | no | Queue one raw key code, decimal or `0x` hexadecimal |
+| `jandy/key/result` | no | `queued`, `queue_full`, `invalid_key`, or `sniff_only` |
+
+Key commands only enter the existing key queue. At most one is transmitted in
+an ACK when the panel next polls this keypad; MQTT never writes directly to the
+bus or faster than the panel poll rate.
+
+Button topics and the aggregate `jandy/state` topic are initialized when MQTT
+connects, then published only when the five-byte `STATUS` bitmap changes. The
+RS-8 Combo LED indexes follow AqualinkD: filter pump 7, spa 6, Aux1–3 at 5–3,
+Aux4–5 at 9–8, Aux6 at 12, Aux7 at 1, and heaters at 15, 17, and 19.
 
 ## The one conceptual thing to internalise
 

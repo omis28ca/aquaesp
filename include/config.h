@@ -58,7 +58,7 @@
 
 // Set to 1 to listen only and never transmit. Do this on first power-up:
 // you get a full bus dump with zero risk of colliding with a live device.
-#define JANDY_SNIFF_ONLY 0
+#define JANDY_SNIFF_ONLY 1
 
 // Log every packet on the bus (not just ours) to serial + /api/raw.
 // Useful during bring-up; costs nothing on the RS-485 task.
@@ -67,8 +67,8 @@
 // ---------------------------------------------------------------------------
 // Panel layout
 // ---------------------------------------------------------------------------
-// Number of controllable circuits your panel exposes. RS-4 = 8, RS-8 = 12,
-// RS-6 = 10. Extra entries are harmless but will report as always-off.
+// Number of controllable circuits your panel exposes. RS-8 = 12.
+// Extra entries are harmless but will report as always-off.
 #define PANEL_BUTTON_COUNT 12
 
 // ---------------------------------------------------------------------------
@@ -87,23 +87,3 @@
 #define MQTT_HA_DISCOVERY_PREFIX "homeassistant"
 
 #define HTTP_PORT        80
-
-// ---------------------------------------------------------------------------
-// Appendix: using a bare ESP32 with an external transceiver instead
-// ---------------------------------------------------------------------------
-// The firmware still supports this; only the pins and JANDY_PIN_DE change.
-//
-//   5-pin module with DE exposed (MAX3485, ADM2483):
-//     ESP32 TX -> DI,  ESP32 RX <- RO,  ESP32 GPIO -> DE and /RE tied
-//     Set JANDY_PIN_DE to that GPIO. Preferred: the UART drives it in
-//     hardware and turnaround stays deterministic.
-//
-//   4-pin auto-direction module (VCC/GND/RXD/TXD only):
-//     Set JANDY_PIN_DE to -1. The board senses the start bit and flips
-//     direction itself. Fine at 9600 baud. Turnaround is no longer
-//     deterministic, so watch ack_latency_us in /api/state.
-//
-//   Logic levels: MAX3485/SP3485 are 3.3V parts (VCC 3.0-3.6V) and connect
-//   to an ESP32 with nothing in between. MAX485/SP485 are 5V parts whose RO
-//   output exceeds the ESP32's ~3.6V limit -- those need 1k series + 2k to
-//   ground on the RO -> RX line, or a level shifter.

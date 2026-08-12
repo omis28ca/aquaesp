@@ -1,54 +1,41 @@
 #pragma once
+
 #include <Arduino.h>
-#include "jandy_codec.h"
+#include <AqualinkDCodec.h>
+
 #include "config.h"
 
-enum LedState : uint8_t {
-    LED_OFF        = 0,
-    LED_ON         = 1,
-    LED_FLASH      = 2,   // "enabled but waiting" -- e.g. heater called, not firing
-    LED_SLOW_FLASH = 3,   // delay / countdown
+enum class LedState : uint8_t {
+    Off,
+    On,
+    Flash,
+    Enabled,
+    Unknown,
 };
 
-struct PanelState {
-    LedState led[PANEL_BUTTON_COUNT] = {};
-
-    char  message[17]   = {0};    // current 16-char display line
-    char  panelModel[24] = {0};   // scraped from the boot banner if we see it
-
-    int   airTempF      = -999;
-    int   poolTempF     = -999;
-    int   spaTempF      = -999;
-    int   poolSetpointF = -999;
-    int   spaSetpointF  = -999;
-
-    bool  serviceMode   = false;
-    bool  online        = false;
-
-    uint32_t lastUpdateMs = 0;
+struct PanelSnapshot {
+    LedState buttons[PANEL_BUTTON_COUNT];
+    uint32_t revision;
 };
 
 class PanelModel {
 public:
-    void handlePacket(const JandyPacket &p);   // called from the RS-485 task
+    PanelModel();
 
-    // Snapshot under a mutex -- safe to call from the network core.
-    PanelState snapshot();
+    // Decodes AqualinkD's five-byte All Button LED bitmap. Returns true only
+    // when at least one published button state changes.
+    bool handlePacket(const aqualinkd::Packet& packet);
+    PanelSnapshot snapshot() const;
+    uint32_t revision() const;
 
-    // Bumped on every change worth pushing to MQTT/WebSocket clients.
-    uint32_t revision() const { return _revision; }
+    static const char* buttonName(size_t index);
+    static const char* stateName(LedState state);
+    static bool isActive(LedState state);
 
 private:
-    void applyStatus(const JandyPacket &p);
-    void applyMessage(const char *text);
-
-    PanelState _s;
-    SemaphoreHandle_t _mux = nullptr;
-    volatile uint32_t _revision = 0;
-    void lock();
-    void unlock();
+    mutable portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
+    LedState buttons_[PANEL_BUTTON_COUNT];
+    uint32_t revision_ = 0;
 };
 
 extern PanelModel Panel;
-
-const char *ledStateName(LedState s);

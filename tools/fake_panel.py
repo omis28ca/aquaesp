@@ -58,6 +58,9 @@ BUTTON_ORDER = [
     "aux5", "aux6", "aux7", "pool_heat", "spa_heat", "solar_heat",
 ]
 
+# AqualinkD's RS-8 Combo button-to-LED mapping. LED indexes are one-based.
+BUTTON_LED_INDEX = [7, 6, 5, 4, 3, 9, 8, 12, 1, 15, 17, 19]
+
 
 def checksum(body: bytes) -> int:
     """Sum from DLE through the last data byte, & 0xFF."""
@@ -141,11 +144,12 @@ class FakePanel:
         self.worst_ms = 0.0
 
     def status_payload(self) -> bytes:
-        """Two bits per LED, four per byte, low pair first."""
-        data = bytearray(4)
-        for i, name in enumerate(BUTTON_ORDER):
+        """Five-byte AqualinkD LED bitmap, two bits per LED."""
+        data = bytearray(5)
+        for name, led_index in zip(BUTTON_ORDER, BUTTON_LED_INDEX):
             if self.circuits[name]:
-                data[i // 4] |= 0x01 << ((i % 4) * 2)
+                index = led_index - 1
+                data[index // 4] |= 0x01 << ((index % 4) * 2)
         return bytes(data)
 
     def poll(self, cmd, data=b""):

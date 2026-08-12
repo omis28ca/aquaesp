@@ -1,0 +1,8 @@
+{
+  "name": "aqualinkd_codec",
+  "version": "1.0.0",
+  "description": "Portable Jandy Aqualink RS frame codec adapted from the AqualinkD protocol implementation",
+  "build": {
+    "flags": "-std=gnu++17"
+  }
+}

@@ -1,153 +1,117 @@
 #include "panel_state.h"
-#include <string.h>
-#include <stdlib.h>
+
+namespace {
+
+constexpr size_t STATUS_BYTE_COUNT = 5;
+constexpr size_t LED_COUNT = STATUS_BYTE_COUNT * 4;
+static_assert(PANEL_BUTTON_COUNT == 12,
+              "The current LED map is specifically for an RS-8 Combo panel");
+
+// RS-8 Combo button order mapped to AqualinkD's one-based LED indexes.
+constexpr uint8_t BUTTON_LED_INDEXES[PANEL_BUTTON_COUNT] = {
+    7, 6, 5, 4, 3, 9, 8, 12, 1, 15, 17, 19,
+};
+
+constexpr const char* BUTTON_NAMES[PANEL_BUTTON_COUNT] = {
+    "filter_pump", "spa", "aux1", "aux2", "aux3", "aux4",
+    "aux5", "aux6", "aux7", "pool_heat", "spa_heat", "solar_heat",
+};
+
+LedState decodeLed(const uint8_t* status, size_t oneBasedIndex) {
+    if (oneBasedIndex == 0 || oneBasedIndex > LED_COUNT) {
+        return LedState::Unknown;
+    }
+    const size_t index = oneBasedIndex - 1;
+    const uint8_t pair = static_cast<uint8_t>(
+        (status[index / 4] >> ((index % 4) * 2)) & 0x03);
+    if ((pair & 0x02) != 0) {
+        return LedState::Flash;
+    }
+    return (pair & 0x01) != 0 ? LedState::On : LedState::Off;
+}
+
+LedState decodeButton(const uint8_t* status, size_t buttonIndex) {
+    const size_t ledIndex = BUTTON_LED_INDEXES[buttonIndex];
+    LedState state = decodeLed(status, ledIndex);
+
+    // All Button heaters use the following LED as an enabled/call indicator.
+    if (buttonIndex >= 9 && state == LedState::Off &&
+        decodeLed(status, ledIndex + 1) == LedState::On) {
+        state = LedState::Enabled;
+    }
+    return state;
+}
+
+}  // namespace
 
 PanelModel Panel;
 
-const char *ledStateName(LedState s) {
-    switch (s) {
-    case LED_OFF:        return "off";
-    case LED_ON:         return "on";
-    case LED_FLASH:      return "flash";
-    case LED_SLOW_FLASH: return "slow_flash";
+PanelModel::PanelModel() {
+    for (LedState& state : buttons_) {
+        state = LedState::Unknown;
+    }
+}
+
+bool PanelModel::handlePacket(const aqualinkd::Packet& packet) {
+    if (packet.command != aqualinkd::CMD_STATUS ||
+        packet.dataLength < STATUS_BYTE_COUNT) {
+        return false;
+    }
+
+    LedState decoded[PANEL_BUTTON_COUNT];
+    for (size_t i = 0; i < PANEL_BUTTON_COUNT; ++i) {
+        decoded[i] = decodeButton(packet.data, i);
+    }
+
+    bool changed = false;
+    portENTER_CRITICAL(&mutex_);
+    for (size_t i = 0; i < PANEL_BUTTON_COUNT; ++i) {
+        if (buttons_[i] != decoded[i]) {
+            buttons_[i] = decoded[i];
+            changed = true;
+        }
+    }
+    if (changed) {
+        ++revision_;
+    }
+    portEXIT_CRITICAL(&mutex_);
+    return changed;
+}
+
+PanelSnapshot PanelModel::snapshot() const {
+    PanelSnapshot result = {};
+    portENTER_CRITICAL(&mutex_);
+    for (size_t i = 0; i < PANEL_BUTTON_COUNT; ++i) {
+        result.buttons[i] = buttons_[i];
+    }
+    result.revision = revision_;
+    portEXIT_CRITICAL(&mutex_);
+    return result;
+}
+
+uint32_t PanelModel::revision() const {
+    portENTER_CRITICAL(&mutex_);
+    const uint32_t value = revision_;
+    portEXIT_CRITICAL(&mutex_);
+    return value;
+}
+
+const char* PanelModel::buttonName(size_t index) {
+    return index < PANEL_BUTTON_COUNT ? BUTTON_NAMES[index] : "unknown";
+}
+
+const char* PanelModel::stateName(LedState state) {
+    switch (state) {
+        case LedState::Off:     return "off";
+        case LedState::On:      return "on";
+        case LedState::Flash:   return "flash";
+        case LedState::Enabled: return "enabled";
+        case LedState::Unknown: return "unknown";
     }
     return "unknown";
 }
 
-void PanelModel::lock() {
-    if (!_mux) _mux = xSemaphoreCreateMutex();
-    xSemaphoreTake(_mux, portMAX_DELAY);
-}
-void PanelModel::unlock() { xSemaphoreGive(_mux); }
-
-PanelState PanelModel::snapshot() {
-    lock();
-    PanelState copy = _s;
-    unlock();
-    return copy;
-}
-
-// ---------------------------------------------------------------------------
-void PanelModel::handlePacket(const JandyPacket &p) {
-    switch (p.cmd) {
-
-    case CMD_STATUS:
-        applyStatus(p);
-        break;
-
-    case CMD_MSG: {
-        char text[17] = {0};
-        size_t n = p.len < 16 ? p.len : 16;
-        memcpy(text, p.data, n);
-        applyMessage(text);
-        break;
-    }
-
-    case CMD_MSG_LONG: {
-        // data[0] is a line number; the text follows.
-        if (p.len < 2) break;
-        char text[17] = {0};
-        size_t n = p.len - 1;
-        if (n > 16) n = 16;
-        memcpy(text, &p.data[1], n);
-        applyMessage(text);
-        break;
-    }
-
-    case CMD_PROBE:
-    case CMD_PROBE_ALT:
-        lock();
-        _s.online = true;
-        unlock();
-        break;
-
-    default:
-        break;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// LED bitmap
-// ---------------------------------------------------------------------------
-// Two bits per LED, four LEDs per byte, low bits first. This layout is what
-// AqualinkD uses and matches the LED_* enum above.
-//
-// VERIFY THIS ON YOUR PANEL. Turn on exactly one circuit at the wall keypad,
-// watch the /api/raw log for the CMD_STATUS payload, and confirm that the bit
-// pair that changed lines up with the button index you expect. Panels with
-// expansion power centers shift the higher indices.
-void PanelModel::applyStatus(const JandyPacket &p) {
-    lock();
-    bool changed = false;
-    for (int i = 0; i < PANEL_BUTTON_COUNT; i++) {
-        int byteIdx = i / 4;
-        if (byteIdx >= p.len) break;
-        int shift = (i % 4) * 2;
-        LedState v = (LedState)((p.data[byteIdx] >> shift) & 0x03);
-        if (_s.led[i] != v) { _s.led[i] = v; changed = true; }
-    }
-    _s.lastUpdateMs = millis();
-    unlock();
-    if (changed) _revision++;
-}
-
-// ---------------------------------------------------------------------------
-// Display text
-// ---------------------------------------------------------------------------
-// The panel cycles a handful of informational lines through the 16-char
-// display. We scrape the ones that carry data we cannot get from the LEDs:
-// temperatures, setpoints, and service mode.
-//
-// Exact wording varies by panel revision. Add cases as you see them in the
-// log rather than guessing -- an unmatched line is harmless.
-
-static bool startsWith(const char *s, const char *prefix) {
-    return strncmp(s, prefix, strlen(prefix)) == 0;
-}
-
-// Pull the first run of digits out of a line, optionally negative.
-static int firstInt(const char *s, int fallback) {
-    const char *p = s;
-    while (*p && !isdigit((unsigned char)*p) &&
-           !(*p == '-' && isdigit((unsigned char)p[1]))) p++;
-    if (!*p) return fallback;
-    return atoi(p);
-}
-
-void PanelModel::applyMessage(const char *text) {
-    // Trim trailing spaces so comparisons and JSON stay clean.
-    char t[17];
-    strncpy(t, text, 16);
-    t[16] = 0;
-    for (int i = 15; i >= 0 && (t[i] == ' ' || t[i] == 0); i--) t[i] = 0;
-
-    lock();
-    bool changed = strcmp(_s.message, t) != 0;
-    strncpy(_s.message, t, sizeof(_s.message) - 1);
-
-    if (startsWith(t, "AIR TEMP")) {
-        _s.airTempF = firstInt(t, _s.airTempF);
-    } else if (startsWith(t, "POOL TEMP")) {
-        _s.poolTempF = firstInt(t, _s.poolTempF);
-    } else if (startsWith(t, "SPA TEMP")) {
-        _s.spaTempF = firstInt(t, _s.spaTempF);
-    } else if (startsWith(t, "AIR") && strstr(t, "POOL")) {
-        // Combined "AIR nn POOL nn" line on some revisions.
-        const char *pool = strstr(t, "POOL");
-        _s.airTempF  = firstInt(t, _s.airTempF);
-        if (pool) _s.poolTempF = firstInt(pool, _s.poolTempF);
-    } else if (startsWith(t, "POOL HEAT")) {
-        _s.poolSetpointF = firstInt(t, _s.poolSetpointF);
-    } else if (startsWith(t, "SPA HEAT")) {
-        _s.spaSetpointF = firstInt(t, _s.spaSetpointF);
-    } else if (strstr(t, "SERVICE")) {
-        _s.serviceMode = true;
-    } else if (strstr(t, "AQUALINK") || strstr(t, "REV")) {
-        strncpy(_s.panelModel, t, sizeof(_s.panelModel) - 1);
-    }
-
-    _s.lastUpdateMs = millis();
-    unlock();
-
-    if (changed) _revision++;
+bool PanelModel::isActive(LedState state) {
+    return state == LedState::On || state == LedState::Flash ||
+           state == LedState::Enabled;
 }

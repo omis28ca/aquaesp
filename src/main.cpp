@@ -1,8 +1,93 @@
 #include <Arduino.h>
+#include <AqualinkD.h>
+#include "base_api.h"
 #include "config.h"
-#include "jandy_serial.h"
 #include "panel_state.h"
-#include "net_api.h"
+
+using aqualinkd::Bus;
+
+namespace {
+
+constexpr UBaseType_t PACKET_QUEUE_LENGTH = 24;
+
+QueueHandle_t packetQueue = nullptr;
+
+const char* commandName(uint8_t command) {
+    switch (command) {
+        case aqualinkd::CMD_PROBE:     return "PROBE";
+        case aqualinkd::CMD_ACK:       return "ACK";
+        case aqualinkd::CMD_STATUS:    return "STATUS";
+        case aqualinkd::CMD_MSG:       return "MSG";
+        case aqualinkd::CMD_MSG_LONG:  return "MSGL";
+        case aqualinkd::CMD_PROBE_ALT: return "PROBE2";
+        default:                       return "?";
+    }
+}
+
+// Runs on the high-priority RS-485 task after the ACK has been queued for
+// transmission. Copy only; formatting and Serial I/O belong on core 0.
+void enqueuePacket(const aqualinkd::Packet& packet, void*) {
+    if (packetQueue == nullptr || xQueueSend(packetQueue, &packet, 0) != pdTRUE) {
+        BaseApi::noteDroppedPacket();
+    }
+}
+
+void logPacket(const aqualinkd::Packet& packet) {
+    Serial.printf("%8lu  %02X %-6s ", static_cast<unsigned long>(millis()),
+                  packet.destination, commandName(packet.command));
+    for (size_t i = 0; i < packet.dataLength; ++i) {
+        Serial.printf("%02X ", packet.data[i]);
+    }
+
+    if (packet.command == aqualinkd::CMD_MSG ||
+        packet.command == aqualinkd::CMD_MSG_LONG) {
+        Serial.print(" |");
+        const size_t textOffset = packet.command == aqualinkd::CMD_MSG_LONG &&
+                                  packet.dataLength > 0 ? 1 : 0;
+        for (size_t i = textOffset; i < packet.dataLength; ++i) {
+            const char value = static_cast<char>(packet.data[i]);
+            Serial.print(value >= 32 && value < 127 ? value : '.');
+        }
+        Serial.print('|');
+    }
+    Serial.println();
+
+    if (packet.destination == aqualinkd::DEV_MASTER &&
+        packet.command == aqualinkd::CMD_ACK && packet.dataLength >= 2 &&
+        packet.data[1] != 0) {
+        Serial.printf("LEARN: a keypad on this bus sent key 0x%02X\n",
+                      packet.data[1]);
+    }
+}
+
+void packetTask(void*) {
+    aqualinkd::Packet packet;
+    for (;;) {
+        if (xQueueReceive(packetQueue, &packet, portMAX_DELAY) == pdTRUE) {
+            logPacket(packet);
+            Panel.handlePacket(packet);
+            BaseApi::recordPacket(packet);
+        }
+    }
+}
+
+bool beginPacketProcessing() {
+    packetQueue = xQueueCreate(PACKET_QUEUE_LENGTH, sizeof(aqualinkd::Packet));
+    if (packetQueue == nullptr) {
+        return false;
+    }
+
+    TaskHandle_t task = nullptr;
+    if (xTaskCreatePinnedToCore(packetTask, "jandy-packets", 4096, nullptr, 2,
+                                &task, 0) != pdPASS) {
+        vQueueDelete(packetQueue);
+        packetQueue = nullptr;
+        return false;
+    }
+    return true;
+}
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 // Core assignment
@@ -14,59 +99,8 @@
 // Arduino's loopTask also lives on core 1 but at priority 1, so it can never
 // hold off the RS-485 task. We leave it idle.
 
-static const char *cmdName(uint8_t cmd) {
-    switch (cmd) {
-    case CMD_PROBE:      return "PROBE";
-    case CMD_ACK:        return "ACK";
-    case CMD_STATUS:     return "STATUS";
-    case CMD_MSG:        return "MSG";
-    case CMD_MSG_LONG:   return "MSGL";
-    case CMD_PROBE_ALT:  return "PROBE2";
-    default:             return "?";
-    }
-}
 
-// Every packet on the bus, including traffic between the panel and devices we
-// are not impersonating. This is how the learn mode below works, and it is
-// what you want on screen during bring-up.
-static void onSnoop(const JandyPacket &p) {
-    char line[160];
-    int n = snprintf(line, sizeof(line), "%8lu  %02X %-6s ",
-                     (unsigned long)millis(), p.dest, cmdName(p.cmd));
-    for (uint8_t i = 0; i < p.len && n < (int)sizeof(line) - 4; i++)
-        n += snprintf(line + n, sizeof(line) - n, "%02X ", p.data[i]);
 
-    // Render the payload as text too -- MSG packets are plain ASCII and it is
-    // far quicker to read the display line than to decode hex by eye.
-    if (p.cmd == CMD_MSG || p.cmd == CMD_MSG_LONG) {
-        n += snprintf(line + n, sizeof(line) - n, " |");
-        for (uint8_t i = 0; i < p.len && n < (int)sizeof(line) - 3; i++) {
-            char c = (char)p.data[i];
-            line[n++] = (c >= 32 && c < 127) ? c : '.';
-        }
-        line[n++] = '|';
-        line[n] = 0;
-    }
-
-    Serial.println(line);
-    NetApi::logRaw(line);
-
-    // --- Learn mode ---------------------------------------------------------
-    // Replies from OTHER keypads are addressed to the master with CMD_ACK.
-    // data[1] is the keycode. Press a button on your wall keypad and the code
-    // it sends shows up here -- that is the value to put in keycodes.h.
-    if (p.dest == DEV_MASTER && p.cmd == CMD_ACK && p.len >= 2 && p.data[1] != 0) {
-        Serial.printf("LEARN: a keypad on this bus sent key 0x%02X\n", p.data[1]);
-    }
-}
-
-static void netTask(void *) {
-    NetApi::begin();
-    for (;;) {
-        NetApi::loop();
-        vTaskDelay(pdMS_TO_TICKS(20));
-    }
-}
 
 void setup() {
     Serial.begin(115200);
@@ -75,13 +109,27 @@ void setup() {
     Serial.printf("Jandy Aqualink RS bridge -- impersonating keypad 0x%02X%s\n",
                   JANDY_MY_ID, JANDY_SNIFF_ONLY ? " (SNIFF ONLY, not transmitting)" : "");
 
-    Bus.onPacket([](const JandyPacket &p) { Panel.handlePacket(p); });
-#if JANDY_PROMISCUOUS
-    Bus.onSnoop(onSnoop);
-#endif
-    Bus.begin(JANDY_MY_ID, JANDY_SNIFF_ONLY, JANDY_PROMISCUOUS);
-
-    xTaskCreatePinnedToCore(netTask, "net", 8192, NULL, 3, NULL, 0);
+    const aqualinkd::BusConfig busConfig = {
+        .uartNumber = JANDY_UART_NUM,
+        .rxPin = JANDY_PIN_RX,
+        .txPin = JANDY_PIN_TX,
+        .dePin = JANDY_PIN_DE,
+        .baud = JANDY_BAUD,
+        .deviceId = JANDY_MY_ID,
+        .sniffOnly = JANDY_SNIFF_ONLY != 0,
+        .promiscuous = JANDY_PROMISCUOUS != 0,
+        .echoWindowUs = JANDY_ECHO_WINDOW_US,
+    };
+    if (!beginPacketProcessing()) {
+        Serial.println("FATAL: unable to initialize packet processing");
+        return;
+    }
+    if (!BaseApi::start()) {
+        Serial.println("ERROR: unable to initialize the HTTP API");
+    }
+    if (!Bus.begin(busConfig, enqueuePacket)) {
+        Serial.println("FATAL: unable to initialize the Jandy RS-485 bus");
+    }
 }
 
 void loop() {
@@ -89,11 +137,16 @@ void loop() {
     static uint32_t last = 0;
     if (millis() - last > 15000) {
         last = millis();
-        Serial.printf("[stat] online=%d packets=%lu bad_cksum=%lu heap=%u\n",
-                      Bus.online(),
-                      (unsigned long)Bus.packetsSeen(),
-                      (unsigned long)Bus.badChecksums(),
-                      (unsigned)ESP.getFreeHeap());
+        const aqualinkd::BusStats stats = Bus.stats();
+        Serial.printf("[stat] packets=%lu acks=%lu bad_cksum=%lu overflow=%lu "
+                      "dropped=%lu ack_latency_us=%lu heap=%u\n",
+                      static_cast<unsigned long>(stats.packetsReceived),
+                      static_cast<unsigned long>(stats.acknowledgementsSent),
+                      static_cast<unsigned long>(stats.checksumErrors),
+                      static_cast<unsigned long>(stats.framesOverflowed),
+                      static_cast<unsigned long>(BaseApi::droppedPackets()),
+                      static_cast<unsigned long>(stats.acknowledgementLatencyUs),
+                      ESP.getFreeHeap());
     }
     vTaskDelay(pdMS_TO_TICKS(500));
 }

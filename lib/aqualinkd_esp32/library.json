@@ -1,0 +1,10 @@
+{
+  "name": "aqualinkd_esp32",
+  "version": "1.0.0",
+  "description": "Low-latency ESP32 UART transport for the Jandy Aqualink RS protocol",
+  "frameworks": "arduino",
+  "platforms": "espressif32",
+  "dependencies": {
+    "aqualinkd_codec": "*"
+  }
+}
