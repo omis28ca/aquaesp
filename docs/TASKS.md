@@ -12,8 +12,9 @@ for what is verified and what is not.
 - [ ] Run with `JANDY_SNIFF_ONLY 1`, capture 5 minutes of bus traffic, save it
       to `docs/captures/` as raw hex lines.
 - [ ] Learn the real keycodes from the physical keypad (learn mode prints
-      `LEARN: a keypad on this bus sent key 0x__`). Update `include/keycodes.h`
-      and the `KEYMAP` in `tools/fake_panel.py` together.
+      `LEARN: a keypad on this bus sent key 0x__`). Update
+      `PanelModel::keyCode()` and the `KEYMAP` in `tools/fake_panel.py`
+      together if the panel differs from AqualinkD's RS-8 Combo values.
 - [ ] Confirm the LED bit layout: turn on one circuit at a time, diff the
       STATUS payloads, verify the bit pair matches the button index.
 - [ ] Record the actual display-line wording this panel emits and fix the
@@ -56,7 +57,7 @@ for what is verified and what is not.
 
 ## 5. Nice to have
 
-- [ ] Small served web UI (currently API only).
+- [x] Small served RS-8 web UI with status LEDs, keypad display, and controls.
 - [ ] Prometheus `/metrics` endpoint.
 - [ ] Home Assistant climate entity for pool/spa heat once setpoints work.
 

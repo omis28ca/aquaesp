@@ -16,6 +16,8 @@ enum class LedState : uint8_t {
 struct PanelSnapshot {
     LedState buttons[PANEL_BUTTON_COUNT];
     uint32_t revision;
+    char display[17];
+    uint32_t displayRevision;
 };
 
 class PanelModel {
@@ -29,6 +31,7 @@ public:
     uint32_t revision() const;
 
     static const char* buttonName(size_t index);
+    static uint8_t keyCode(size_t index);
     static const char* stateName(LedState state);
     static bool isActive(LedState state);
 
@@ -36,6 +39,8 @@ private:
     mutable portMUX_TYPE mutex_ = portMUX_INITIALIZER_UNLOCKED;
     LedState buttons_[PANEL_BUTTON_COUNT];
     uint32_t revision_ = 0;
+    char display_[17] = {};
+    uint32_t displayRevision_ = 0;
 };
 
 extern PanelModel Panel;

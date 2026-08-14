@@ -10,6 +10,7 @@
 
 #include "config.h"
 #include "panel_state.h"
+#include "web_ui.h"
 
 namespace BaseApi {
 namespace {
@@ -101,6 +102,7 @@ void buildStatusJson(String& body, bool includeButtons) {
     document["packets_dropped"] = droppedPacketCount;
     document["ack_latency_us"] = stats.acknowledgementLatencyUs;
     document["keys_queued"] = aqualinkd::Bus.pendingKeys();
+    document["sniff_only"] = JANDY_SNIFF_ONLY != 0;
     document["wifi_connected"] = WiFi.status() == WL_CONNECTED;
     document["mqtt_connected"] = MQTT_ENABLED != 0 && mqtt.connected();
     if (WiFi.status() == WL_CONNECTED) {
@@ -111,6 +113,8 @@ void buildStatusJson(String& body, bool includeButtons) {
     if (includeButtons) {
         const PanelSnapshot snapshot = Panel.snapshot();
         document["button_revision"] = snapshot.revision;
+        document["display"] = snapshot.display;
+        document["display_revision"] = snapshot.displayRevision;
         JsonArray buttons = document["buttons"].to<JsonArray>();
         for (size_t i = 0; i < PANEL_BUTTON_COUNT; ++i) {
             JsonObject button = buttons.add<JsonObject>();
@@ -175,11 +179,82 @@ void sendRaw(AsyncWebServerRequest* request) {
     request->send(200, "text/plain; charset=utf-8", body);
 }
 
+bool parseByteParameter(AsyncWebServerRequest* request, const char* name,
+                        long minimum, long maximum, uint8_t& result) {
+    if (!request->hasParam(name)) {
+        return false;
+    }
+    const String text = request->getParam(name)->value();
+    char* end = nullptr;
+    const long value = strtol(text.c_str(), &end, 0);
+    while (end != nullptr && *end == ' ') {
+        ++end;
+    }
+    if (end == text.c_str() || (end != nullptr && *end != '\0') ||
+        value < minimum || value > maximum) {
+        return false;
+    }
+    result = static_cast<uint8_t>(value);
+    return true;
+}
+
+void queueHttpKey(AsyncWebServerRequest* request, uint8_t keyCode) {
+    if (JANDY_SNIFF_ONLY != 0) {
+        request->send(403, "application/json",
+                      "{\"error\":\"controls disabled in sniff-only mode\"}");
+        return;
+    }
+    if (!aqualinkd::Bus.online()) {
+        request->send(409, "application/json",
+                      "{\"error\":\"panel bus is offline\"}");
+        return;
+    }
+    if (!aqualinkd::Bus.queueKey(keyCode)) {
+        request->send(503, "application/json",
+                      "{\"error\":\"key queue is full\"}");
+        return;
+    }
+
+    char body[48];
+    snprintf(body, sizeof(body), "{\"result\":\"queued\",\"key\":%u}",
+             static_cast<unsigned>(keyCode));
+    request->send(202, "application/json", body);
+}
+
+void sendButtonPress(AsyncWebServerRequest* request) {
+    uint8_t index = 0;
+    if (!parseByteParameter(request, "index", 0, PANEL_BUTTON_COUNT - 1,
+                            index)) {
+        request->send(400, "application/json",
+                      "{\"error\":\"index must identify an RS-8 button\"}");
+        return;
+    }
+    queueHttpKey(request, PanelModel::keyCode(index));
+}
+
+void sendRawKey(AsyncWebServerRequest* request) {
+    uint8_t keyCode = 0;
+    if (!parseByteParameter(request, "code", 1, 0xFF, keyCode)) {
+        request->send(400, "application/json",
+                      "{\"error\":\"code must be a byte from 1 to 255\"}");
+        return;
+    }
+    queueHttpKey(request, keyCode);
+}
+
 void configureRoutes() {
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(200, "text/html; charset=utf-8", WEB_UI);
+    });
+    server.on("/favicon.ico", HTTP_GET, [](AsyncWebServerRequest* request) {
+        request->send(204);
+    });
     server.on("/api/status", HTTP_GET, sendStatus);
     server.on("/api/state", HTTP_GET, sendState);
     server.on("/api/config", HTTP_GET, sendConfig);
     server.on("/api/raw", HTTP_GET, sendRaw);
+    server.on("/api/button", HTTP_POST, sendButtonPress);
+    server.on("/api/key", HTTP_POST, sendRawKey);
     server.onNotFound([](AsyncWebServerRequest* request) {
         request->send(404, "application/json", "{\"error\":\"not found\"}");
     });
@@ -344,7 +419,7 @@ void apiTask(void*) {
                           WiFi.gatewayIP().toString().c_str(),
                           WiFi.subnetMask().toString().c_str(),
                           WiFi.dnsIP().toString().c_str(), WiFi.RSSI());
-            Serial.printf("[api] state URL: http://%s:%u/api/state\n",
+            Serial.printf("[api] web UI: http://%s:%u/\n",
                           WiFi.localIP().toString().c_str(),
                           static_cast<unsigned>(HTTP_PORT));
         } else if (wifiStatus != WL_CONNECTED &&

@@ -37,21 +37,21 @@ NUL, DLE, STX, ETX = 0x00, 0x10, 0x02, 0x03
 
 CMD_PROBE, CMD_ACK, CMD_STATUS, CMD_MSG, CMD_MSG_LONG = 0x00, 0x01, 0x02, 0x03, 0x04
 
-# Keep this in sync with include/keycodes.h. When you learn the real codes from
-# your wall keypad, update both.
+# AqualinkD All Button key codes for an RS-8 Combo panel. Keep these in sync
+# with PanelModel::keyCode().
 KEYMAP = {
     0x02: "filter_pump",
     0x01: "spa",
     0x05: "aux1",
-    0x06: "aux2",
-    0x07: "aux3",
-    0x08: "aux4",
-    0x09: "aux5",
-    0x0A: "aux6",
-    0x0B: "aux7",
-    0x0C: "pool_heat",
-    0x0D: "spa_heat",
-    0x0E: "solar_heat",
+    0x0A: "aux2",
+    0x0F: "aux3",
+    0x06: "aux4",
+    0x0B: "aux5",
+    0x10: "aux6",
+    0x15: "aux7",
+    0x12: "pool_heat",
+    0x17: "spa_heat",
+    0x1C: "solar_heat",
 }
 BUTTON_ORDER = [
     "filter_pump", "spa", "aux1", "aux2", "aux3", "aux4",

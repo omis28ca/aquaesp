@@ -17,6 +17,12 @@ constexpr const char* BUTTON_NAMES[PANEL_BUTTON_COUNT] = {
     "aux5", "aux6", "aux7", "pool_heat", "spa_heat", "solar_heat",
 };
 
+// AqualinkD All Button key codes for an RS-8 Combo panel.
+constexpr uint8_t BUTTON_KEY_CODES[PANEL_BUTTON_COUNT] = {
+    0x02, 0x01, 0x05, 0x0A, 0x0F, 0x06,
+    0x0B, 0x10, 0x15, 0x12, 0x17, 0x1C,
+};
+
 LedState decodeLed(const uint8_t* status, size_t oneBasedIndex) {
     if (oneBasedIndex == 0 || oneBasedIndex > LED_COUNT) {
         return LedState::Unknown;
@@ -53,6 +59,35 @@ PanelModel::PanelModel() {
 }
 
 bool PanelModel::handlePacket(const aqualinkd::Packet& packet) {
+    if (packet.destination != JANDY_MY_ID) {
+        return false;
+    }
+
+    if (packet.command == aqualinkd::CMD_MSG ||
+        packet.command == aqualinkd::CMD_MSG_LONG) {
+        const size_t offset = packet.command == aqualinkd::CMD_MSG_LONG ? 1 : 0;
+        if (packet.dataLength <= offset) {
+            return false;
+        }
+
+        char decoded[17] = {};
+        const size_t length = min<size_t>(16, packet.dataLength - offset);
+        for (size_t i = 0; i < length; ++i) {
+            const char value = static_cast<char>(packet.data[offset + i]);
+            decoded[i] = value >= 32 && value < 127 ? value : ' ';
+        }
+
+        bool changed = false;
+        portENTER_CRITICAL(&mutex_);
+        if (strncmp(display_, decoded, sizeof(display_)) != 0) {
+            memcpy(display_, decoded, sizeof(display_));
+            ++displayRevision_;
+            changed = true;
+        }
+        portEXIT_CRITICAL(&mutex_);
+        return changed;
+    }
+
     if (packet.command != aqualinkd::CMD_STATUS ||
         packet.dataLength < STATUS_BYTE_COUNT) {
         return false;
@@ -85,6 +120,8 @@ PanelSnapshot PanelModel::snapshot() const {
         result.buttons[i] = buttons_[i];
     }
     result.revision = revision_;
+    memcpy(result.display, display_, sizeof(result.display));
+    result.displayRevision = displayRevision_;
     portEXIT_CRITICAL(&mutex_);
     return result;
 }
@@ -98,6 +135,10 @@ uint32_t PanelModel::revision() const {
 
 const char* PanelModel::buttonName(size_t index) {
     return index < PANEL_BUTTON_COUNT ? BUTTON_NAMES[index] : "unknown";
+}
+
+uint8_t PanelModel::keyCode(size_t index) {
+    return index < PANEL_BUTTON_COUNT ? BUTTON_KEY_CODES[index] : 0;
 }
 
 const char* PanelModel::stateName(LedState state) {

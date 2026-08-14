@@ -83,10 +83,10 @@ LEARN: a keypad on this bus sent key 0x05
 ```
 
 RS-485 is a shared medium, so you see the real keypad's replies even though
-they're addressed to the panel. Fill in `include/keycodes.h` from what you
-observe. **The table shipped in that file is an unverified guess** — codes vary
-by panel family, and I had no hardware to check against. Cross-reference
-AqualinkD's `source/aq_serial.h` for your model as well.
+they're addressed to the panel. The RS-8 Combo codes in
+`PanelModel::keyCode()` follow AqualinkD's `source/aq_serial.h`; compare the
+captured values with that table and keep `tools/fake_panel.py` in sync if your
+panel family differs.
 
 **3. Verify the LED bit layout.** Turn on exactly one circuit at the keypad and
 watch the `STATUS` payload. The decoder in `panel_state.cpp` assumes two bits
@@ -128,21 +128,26 @@ pip install pyserial
 ```
 
 It polls, validates your ACKs, measures turnaround, warns past 20 ms, and
-toggles simulated circuits in response to keypresses — so `POST /api/button/2/on`
-produces a visible effect that comes back through STATUS. Do this before you go
-anywhere near real equipment.
+toggles simulated circuits in response to keypresses. Open the ESP32 address in
+a browser and press an RS-8 button to see the resulting state return through a
+STATUS frame. Set `JANDY_SNIFF_ONLY` to `0` for this isolated fake-panel test;
+the UI deliberately disables all controls while sniff-only mode is active.
 
 ## API
 
 | Method | Path | Effect |
 |---|---|---|
+| GET  | `/` | Self-contained RS-8 test-panel web UI |
 | GET  | `/api/status` | Bus, ACK latency, queue, heap and WiFi status JSON |
-| GET  | `/api/state` | Status plus the current state of all 12 RS-8 buttons |
+| GET  | `/api/state` | Status, 16-character display, and all 12 RS-8 buttons |
 | GET  | `/api/config` | Non-secret compiled device and bus configuration |
 | GET  | `/api/raw` | Last 60 decoded bus frames as text |
+| POST | `/api/button?index=0` | Queue one RS-8 circuit-button press (index 0–11) |
+| POST | `/api/key?code=9` | Queue one raw keypad key, used by menu navigation |
 
-Button-level control and WebSocket routes will be added after panel-state
-decoding is verified against captured traffic.
+HTTP controls return `403` in sniff-only mode, `409` while the panel bus is
+offline, and `503` if the key queue is full. A successful `202` means the press
+is queued; it is sent only in the ACK to the panel's next poll.
 
 ## MQTT
 
@@ -169,11 +174,11 @@ Aux4–5 at 9–8, Aux6 at 12, Aux7 at 1, and heaters at 15, 17, and 19.
 
 ## The one conceptual thing to internalise
 
-There is no "set circuit 3 on" command. A keypress **toggles**. `applyButtonCommand()`
-in `net_api.cpp` reads the current LED state and only queues a press when the
-state actually needs to change — that's what makes the REST and MQTT interfaces
-idempotent. If your LED decode is wrong, on/off commands will silently do the
-opposite of what you asked, which is why step 3 above matters more than it looks.
+There is no "set circuit 3 on" command. A keypress **toggles**. The web panel
+therefore behaves like the physical RS-8 keypad: each click queues exactly one
+press and the displayed state changes only after the control panel sends the
+resulting STATUS bitmap. If your LED decode is wrong, controls can appear to
+operate the wrong circuit, which is why isolated fake-panel testing comes first.
 
 ## Known gaps
 
