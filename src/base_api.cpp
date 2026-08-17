@@ -2,8 +2,10 @@
 
 #include <Arduino.h>
 #include <ArduinoJson.h>
+#include <ArduinoOTA.h>
 #include <AqualinkD.h>
 #include <ESPAsyncWebServer.h>
+#include <ESPmDNS.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <stdarg.h>
@@ -30,6 +32,7 @@ size_t rawCount = 0;
 volatile uint32_t rawRevision = 0;
 volatile uint32_t droppedPacketCount = 0;
 bool serverStarted = false;
+bool networkServicesStarted = false;
 
 const char* commandName(uint8_t command) {
     switch (command) {
@@ -154,6 +157,9 @@ void sendConfig(AsyncWebServerRequest* request) {
     document["echo_window_us"] = JANDY_ECHO_WINDOW_US;
     document["panel_button_count"] = PANEL_BUTTON_COUNT;
     document["http_port"] = HTTP_PORT;
+    document["mdns_name"] = String(DEVICE_HOSTNAME) + ".local";
+    document["ota_enabled"] = true;
+    document["ota_port"] = 3232;
     document["mqtt_enabled"] = MQTT_ENABLED != 0;
     document["mqtt_host"] = MQTT_HOST;
     document["mqtt_port"] = MQTT_PORT;
@@ -376,6 +382,40 @@ bool connectMqtt() {
     return true;
 }
 
+void startNetworkServices() {
+    if (networkServicesStarted) {
+        return;
+    }
+
+    ArduinoOTA.setHostname(DEVICE_HOSTNAME);
+    ArduinoOTA.setPassword(OTA_PASSWORD);
+    ArduinoOTA.onStart([]() {
+        Serial.println("[ota] update starting; stopping Jandy bus");
+        if (mqtt.connected()) {
+            const String availabilityTopic = mqttTopic("status");
+            mqtt.publish(availabilityTopic.c_str(), "offline", true);
+            mqtt.disconnect();
+        }
+        aqualinkd::Bus.end();
+    });
+    ArduinoOTA.onEnd([]() {
+        Serial.println("[ota] update complete; rebooting");
+    });
+    ArduinoOTA.onError([](ota_error_t error) {
+        Serial.printf("[ota] update failed error=%u; rebooting\n",
+                      static_cast<unsigned>(error));
+        Serial.flush();
+        ESP.restart();
+    });
+    ArduinoOTA.begin();
+    MDNS.addService("http", "tcp", HTTP_PORT);
+
+    networkServicesStarted = true;
+    Serial.printf("[net] mDNS ready: http://%s.local/\n", DEVICE_HOSTNAME);
+    Serial.printf("[ota] ready: %s.local:3232 (authenticated)\n",
+                  DEVICE_HOSTNAME);
+}
+
 void apiTask(void*) {
     Serial.printf("[net] hostname=%s ssid=%s ipv4=DHCP http_port=%u\n",
                   DEVICE_HOSTNAME, WIFI_SSID,
@@ -422,6 +462,7 @@ void apiTask(void*) {
             Serial.printf("[api] web UI: http://%s:%u/\n",
                           WiFi.localIP().toString().c_str(),
                           static_cast<unsigned>(HTTP_PORT));
+            startNetworkServices();
         } else if (wifiStatus != WL_CONNECTED &&
                    previousWifiStatus == WL_CONNECTED) {
             Serial.println("[api] WiFi disconnected");
@@ -446,6 +487,10 @@ void apiTask(void*) {
                 publishLatestRaw(publishedRawRevision);
                 publishButtonChanges(publishedPanel, false);
             }
+        }
+
+        if (networkServicesStarted && wifiStatus == WL_CONNECTED) {
+            ArduinoOTA.handle();
         }
 
         const bool mqttStatus = mqtt.connected();

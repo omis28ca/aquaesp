@@ -35,6 +35,8 @@ Suggested first prompt on the new PC:
   - Menu, Cancel, Left, Right, and Enter keys.
   - Bus, ACK-latency, packet, key-queue, and Wi-Fi indicators.
 - `tools/fake_panel.py` for isolated end-to-end testing.
+- `pool.local` mDNS discovery and password-protected ArduinoOTA. OTA stops the
+  RS-485 task before writing flash.
 
 The web UI is embedded in `include/web_ui.h`; no filesystem image or internet
 connection is required.
@@ -171,6 +173,7 @@ STATUS frame addressed to this keypad.
 
 - `AGENTS.md`: mandatory architecture and safety constraints.
 - `include/config.h`: pins, keypad ID, sniff mode, Wi-Fi, and MQTT settings.
+- `platformio.ini`: USB and `waveshare_s3_rs485_ota` upload environments.
 - `src/main.cpp`: task setup and packet handoff.
 - `src/base_api.cpp`: Wi-Fi, HTTP routes, MQTT, and control validation.
 - `include/web_ui.h`: embedded RS-8 browser interface.

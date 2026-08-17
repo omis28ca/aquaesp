@@ -38,7 +38,8 @@ for what is verified and what is not.
       seconds, clear `online` and mark MQTT availability offline.
 - [ ] Persist `config.h` values to NVS with a captive-portal or web-based setup
       page, so a rebuild is not needed to change WiFi or the keypad ID.
-- [ ] OTA update.
+- [x] Password-protected ArduinoOTA with `pool.local` mDNS discovery and
+      RS-485 shutdown before flash writes.
 
 ## 4. Features
 

@@ -152,6 +152,35 @@ HTTP controls return `403` in sniff-only mode, `409` while the panel bus is
 offline, and `503` if the key queue is full. A successful `202` means the press is queued; it is sent only in the ACK to the
 panel's next STATUS frame.
 
+## Network name and OTA updates
+
+After WiFi connects, mDNS advertises the web panel at:
+
+```text
+http://pool.local/
+```
+
+The serial log also prints the DHCP address as a fallback for networks or
+Windows configurations where `.local` multicast DNS is blocked. The first
+OTA-capable firmware must be installed over USB:
+
+```bash
+pio run -e waveshare_s3_rs485 -t upload
+```
+
+After that, upload subsequent firmware over WiFi with:
+
+```bash
+pio run -e waveshare_s3_rs485_ota -t upload
+```
+
+OTA is password protected. Before deploying, change `OTA_PASSWORD` in
+`include/config.h` and the matching `--auth` value in the
+`waveshare_s3_rs485_ota` environment in `platformio.ini`. An update announces
+MQTT offline and stops the RS-485 task before writing flash, preventing late
+ACKs from reaching the live Jandy bus. The device reboots after success; an OTA
+error also reboots because the bus has already been stopped.
+
 ## MQTT
 
 See [`docs/API_MQTT.md`](docs/API_MQTT.md) for the full topic and payload

@@ -76,7 +76,11 @@
 // ---------------------------------------------------------------------------
 #define WIFI_SSID        "thats_what_she_ssid"
 #define WIFI_PASS        "1234567890"
-#define DEVICE_HOSTNAME  "pool-bridge"
+#define DEVICE_HOSTNAME  "pool"
+
+// ArduinoOTA authentication. Change this here and in the OTA environment's
+// upload_flags in platformio.ini before using OTA outside a trusted test LAN.
+#define OTA_PASSWORD     "change-me"
 
 #define MQTT_ENABLED     1
 #define MQTT_HOST        "10.0.0.250"
