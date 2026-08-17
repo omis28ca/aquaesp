@@ -6,7 +6,7 @@ changing anything.
 ## What this is
 
 Firmware for an ESP32 that impersonates an **Jandy Aqualink RS8 Pool/Spa Combo Control System - 6687RLY keypad** on a Jandy
-Aqualink RS-485 bus and re-exposes the pool panel as REST + WebSocket + MQTT.
+Aqualink RS-485 bus and re-exposes the pool panel as REST + MQTT.
 PlatformIO, Arduino framework.
 
 Protocol work is ported from [AqualinkD](https://github.com/aqualinkd/AqualinkD)

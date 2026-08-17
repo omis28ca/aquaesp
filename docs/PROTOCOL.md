@@ -78,10 +78,13 @@ makes the bus misbehave — always sniff before claiming one.
 NUL DLE STX 00 01 <ackType> <keycode> <cksum> DLE ETX NUL
 ```
 
-- `ackType`: `0x00` normal, `0x01` screen busy, `0x03` pause
+- `ackType`: All Button emulation uses `0x80` normally and `0x81` after
+  `MSG_LONG`. The legacy `0x00` null ACK remains the checksum test fixture.
 - `keycode`: `0x00` for "no button pressed", otherwise one keypress
 
-Neither field can be `0x10`, so the ACK never needs stuffing.
+Queued keypresses are attached only to STATUS replies; PROBE and display replies
+must not consume the queue. ACK bytes are DLE-stuffed like every other frame
+(Aux 6 uses keycode `0x10`).
 
 ## The conceptual model
 

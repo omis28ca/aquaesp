@@ -4,6 +4,8 @@ namespace {
 
 constexpr size_t STATUS_BYTE_COUNT = 5;
 constexpr size_t LED_COUNT = STATUS_BYTE_COUNT * 4;
+constexpr uint8_t KEYPAD_ID_MIN = 0x08;
+constexpr uint8_t KEYPAD_ID_MAX = 0x0B;
 static_assert(PANEL_BUTTON_COUNT == 12,
               "The current LED map is specifically for an RS-8 Combo panel");
 
@@ -59,12 +61,12 @@ PanelModel::PanelModel() {
 }
 
 bool PanelModel::handlePacket(const aqualinkd::Packet& packet) {
-    if (packet.destination != JANDY_MY_ID) {
-        return false;
-    }
-
     if (packet.command == aqualinkd::CMD_MSG ||
         packet.command == aqualinkd::CMD_MSG_LONG) {
+        if (packet.destination != JANDY_MY_ID) {
+            return false;
+        }
+
         const size_t offset = packet.command == aqualinkd::CMD_MSG_LONG ? 1 : 0;
         if (packet.dataLength <= offset) {
             return false;
@@ -89,7 +91,9 @@ bool PanelModel::handlePacket(const aqualinkd::Packet& packet) {
     }
 
     if (packet.command != aqualinkd::CMD_STATUS ||
-        packet.dataLength < STATUS_BYTE_COUNT) {
+        packet.dataLength < STATUS_BYTE_COUNT ||
+        packet.destination < KEYPAD_ID_MIN ||
+        packet.destination > KEYPAD_ID_MAX) {
         return false;
     }
 

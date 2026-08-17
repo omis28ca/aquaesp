@@ -51,7 +51,7 @@ private:
     static void taskEntry(void* context);
     void run();
     void dispatch(const Packet& packet, uint64_t receivedAtUs);
-    bool sendAck(uint8_t keyCode, uint64_t receivedAtUs);
+    bool sendAck(uint8_t ackType, uint8_t keyCode, uint64_t receivedAtUs);
     bool isSelfEcho(const Packet& packet, uint64_t receivedAtUs) const;
 
     BusConfig config_ = {};
@@ -69,6 +69,7 @@ private:
     volatile uint32_t ackLatencyUs_ = 0;
     volatile uint64_t echoUntilUs_ = 0;
     volatile uint64_t lastAddressedPacketUs_ = 0;
+    volatile uint8_t lastAckType_ = 0;
     volatile uint8_t lastKeyCode_ = 0;
 };
 

@@ -22,6 +22,8 @@ constexpr uint8_t CMD_PROBE_ALT = 0x05;
 constexpr uint8_t ACK_NORMAL = 0x00;
 constexpr uint8_t ACK_SCREEN_BUSY = 0x01;
 constexpr uint8_t ACK_PAUSE = 0x03;
+constexpr uint8_t ACK_ALLBUTTON = 0x80;
+constexpr uint8_t ACK_ALLBUTTON_BUSY = 0x81;
 
 constexpr size_t MAX_DATA_SIZE = 128;
 constexpr size_t MAX_FRAME_SIZE = 2 * MAX_DATA_SIZE + 16;

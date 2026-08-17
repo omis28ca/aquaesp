@@ -27,7 +27,7 @@ bool JandyBus::begin(const BusConfig& config, PacketHandler handler,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .rx_flow_ctrl_thresh = 0,
-        .source_clk = UART_SCLK_DEFAULT,
+        .source_clk = UART_SCLK_APB,
     };
 
     if (uart_param_config(config_.uartNumber, &uartConfig) != ESP_OK ||
@@ -115,32 +115,32 @@ void JandyBus::taskEntry(void* context) {
 bool JandyBus::isSelfEcho(const Packet& packet, uint64_t receivedAtUs) const {
     return config_.dePin < 0 && receivedAtUs < echoUntilUs_ &&
            packet.destination == DEV_MASTER && packet.command == CMD_ACK &&
-           packet.dataLength >= 2 && packet.data[0] == ACK_NORMAL &&
+           packet.dataLength >= 2 && packet.data[0] == lastAckType_ &&
            packet.data[1] == lastKeyCode_;
 }
 
 void JandyBus::run() {
-    uint8_t input[64];
+    uint8_t input = 0;
     Packet packet;
 
     for (;;) {
-        const int count = uart_read_bytes(config_.uartNumber, input, sizeof(input),
-                                          portMAX_DELAY);
-        for (int i = 0; i < count; ++i) {
-            const uint64_t nowUs = esp_timer_get_time();
-            const DecodeResult result = decoder_.feed(input[i], packet);
-            if (result == DecodeResult::PacketReady) {
-                if (isSelfEcho(packet, nowUs)) {
-                    ++echoesDropped_;
-                    continue;
-                }
-                ++packetsReceived_;
-                dispatch(packet, nowUs);
-            } else if (result == DecodeResult::BadChecksum) {
-                ++checksumErrors_;
-            } else if (result == DecodeResult::Overflow) {
-                ++framesOverflowed_;
+        if (uart_read_bytes(config_.uartNumber, &input, 1, portMAX_DELAY) != 1) {
+            continue;
+        }
+
+        const uint64_t nowUs = esp_timer_get_time();
+        const DecodeResult result = decoder_.feed(input, packet);
+        if (result == DecodeResult::PacketReady) {
+            if (isSelfEcho(packet, nowUs)) {
+                ++echoesDropped_;
+                continue;
             }
+            ++packetsReceived_;
+            dispatch(packet, nowUs);
+        } else if (result == DecodeResult::BadChecksum) {
+            ++checksumErrors_;
+        } else if (result == DecodeResult::Overflow) {
+            ++framesOverflowed_;
         }
     }
 }
@@ -155,10 +155,12 @@ void JandyBus::dispatch(const Packet& packet, uint64_t receivedAtUs) {
     // application callback, which may only queue work for another task.
     if (addressedToUs && !config_.sniffOnly) {
         uint8_t keyCode = 0;
-        if (keyQueue_ != nullptr) {
+        if (packet.command == CMD_STATUS && keyQueue_ != nullptr) {
             xQueueReceive(keyQueue_, &keyCode, 0);
         }
-        sendAck(keyCode, receivedAtUs);
+        const uint8_t ackType =
+            packet.command == CMD_MSG_LONG ? ACK_ALLBUTTON_BUSY : ACK_ALLBUTTON;
+        sendAck(ackType, keyCode, receivedAtUs);
     }
 
     if (handler_ != nullptr && (addressedToUs || config_.promiscuous)) {
@@ -166,9 +168,10 @@ void JandyBus::dispatch(const Packet& packet, uint64_t receivedAtUs) {
     }
 }
 
-bool JandyBus::sendAck(uint8_t keyCode, uint64_t receivedAtUs) {
+bool JandyBus::sendAck(uint8_t ackType, uint8_t keyCode,
+                       uint64_t receivedAtUs) {
     uint8_t frame[MAX_FRAME_SIZE];
-    const size_t length = encodeAck(ACK_NORMAL, keyCode, frame, sizeof(frame));
+    const size_t length = encodeAck(ackType, keyCode, frame, sizeof(frame));
     if (length == 0) {
         return false;
     }
@@ -181,6 +184,7 @@ bool JandyBus::sendAck(uint8_t keyCode, uint64_t receivedAtUs) {
     ++acknowledgementsSent_;
     ackLatencyUs_ = static_cast<uint32_t>(esp_timer_get_time() - receivedAtUs);
     if (config_.dePin < 0) {
+        lastAckType_ = ackType;
         lastKeyCode_ = keyCode;
         echoUntilUs_ = esp_timer_get_time() + config_.echoWindowUs;
     }

@@ -142,7 +142,7 @@ Hostname resolution may not work on Windows; use the printed DHCP address.
 
 Control responses:
 
-- `202`: queued for the next poll ACK.
+- `202`: queued for the ACK to the next STATUS frame addressed to this keypad.
 - `403`: sniff-only mode.
 - `409`: this emulated keypad is not being polled.
 - `503`: key queue full.
@@ -164,7 +164,8 @@ Topics below the configured base topic (currently `jandy`) include:
 
 Button topics and aggregate state publish after actual button-state changes,
 with one retained initialization after MQTT reconnect. MQTT and HTTP only queue
-keys; the core-1 bus task transmits at most one key with the next panel poll.
+keys; the core-1 bus task transmits at most one key with the ACK to the next
+STATUS frame addressed to this keypad.
 
 ## Important files
 

@@ -1,7 +1,7 @@
 # Jandy Aqualink RS → ESP32 bridge
 
 An ESP32 that impersonates an **All Button RS keypad** on the Jandy RS-485 bus
-and re-exposes the panel as REST + WebSocket + MQTT.
+and re-exposes the panel as REST + MQTT.
 
 Protocol work is ported from [AqualinkD](https://github.com/aqualinkd/AqualinkD)
 (`aq_serial.c`, `aq_panel.c`) and [aquaweb](https://github.com/earlephilhower/aquaweb)
@@ -135,6 +135,9 @@ the UI deliberately disables all controls while sniff-only mode is active.
 
 ## API
 
+See [`docs/API_MQTT.md`](docs/API_MQTT.md) for complete JSON schemas, field
+semantics, command responses, examples, and safe home-automation guidance.
+
 | Method | Path | Effect |
 |---|---|---|
 | GET  | `/` | Self-contained RS-8 test-panel web UI |
@@ -146,10 +149,13 @@ the UI deliberately disables all controls while sniff-only mode is active.
 | POST | `/api/key?code=9` | Queue one raw keypad key, used by menu navigation |
 
 HTTP controls return `403` in sniff-only mode, `409` while the panel bus is
-offline, and `503` if the key queue is full. A successful `202` means the press
-is queued; it is sent only in the ACK to the panel's next poll.
+offline, and `503` if the key queue is full. A successful `202` means the press is queued; it is sent only in the ACK to the
+panel's next STATUS frame.
 
 ## MQTT
+
+See [`docs/API_MQTT.md`](docs/API_MQTT.md) for the full topic and payload
+reference, retained/publication behavior, QoS, examples, and command caveats.
 
 When `MQTT_ENABLED` is set, the core-0 network task maintains the broker
 connection and exposes these topics below `MQTT_BASE_TOPIC` (default `jandy`):
@@ -164,8 +170,8 @@ connection and exposes these topics below `MQTT_BASE_TOPIC` (default `jandy`):
 | `jandy/key/result` | no | `queued`, `queue_full`, `invalid_key`, or `sniff_only` |
 
 Key commands only enter the existing key queue. At most one is transmitted in
-an ACK when the panel next polls this keypad; MQTT never writes directly to the
-bus or faster than the panel poll rate.
+an ACK for the next STATUS frame addressed to this keypad; MQTT never writes
+directly to the bus or faster than the panel poll rate.
 
 Button topics and the aggregate `jandy/state` topic are initialized when MQTT
 connects, then published only when the five-byte `STATUS` bitmap changes. The

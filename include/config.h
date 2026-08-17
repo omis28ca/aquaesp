@@ -58,7 +58,7 @@
 
 // Set to 1 to listen only and never transmit. Do this on first power-up:
 // you get a full bus dump with zero risk of colliding with a live device.
-#define JANDY_SNIFF_ONLY 1
+#define JANDY_SNIFF_ONLY 0
 
 // Log every packet on the bus (not just ours) to serial + /api/raw.
 // Useful during bring-up; costs nothing on the RS-485 task.
